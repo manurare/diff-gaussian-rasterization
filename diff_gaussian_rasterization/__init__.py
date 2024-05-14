@@ -10,6 +10,7 @@
 #
 
 from typing import NamedTuple
+from dataclasses import dataclass
 import torch.nn as nn
 import torch
 from . import _C
@@ -169,7 +170,8 @@ class _RasterizeGaussians(torch.autograd.Function):
 
         return grads
 
-class GaussianRasterizationSettings(NamedTuple):
+@dataclass
+class GaussianRasterizationSettings:
     image_height: int
     image_width: int 
     tanfovx : float
