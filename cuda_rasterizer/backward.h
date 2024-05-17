@@ -37,6 +37,7 @@ namespace BACKWARD
 		float3* dL_dmean2D,
 		float4* dL_dconic2D,
 		float* dL_dopacity,
+		float* dL_ddepths,
 		float* dL_dcolors);
 
 	void preprocess(
@@ -57,6 +58,7 @@ namespace BACKWARD
 		const float3* dL_dmean2D,
 		const float* dL_dconics,
 		glm::vec3* dL_dmeans,
+		float* dL_ddepth,
 		float* dL_dcolor,
 		float* dL_dcov3D,
 		float* dL_dsh,

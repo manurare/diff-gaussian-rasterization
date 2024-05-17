@@ -357,6 +357,7 @@ __global__ void preprocessCUDA(
 	const glm::vec3* campos,
 	const float3* dL_dmean2D,
 	glm::vec3* dL_dmeans,
+	float* dL_ddepth,
 	float* dL_dcolor,
 	float* dL_dcov3D,
 	float* dL_dsh,
@@ -373,14 +374,22 @@ __global__ void preprocessCUDA(
 	float4 m_hom = transformPoint4x4(m, proj);
 	float m_w = 1.0f / (m_hom.w + 0.0000001f);
 
+	glm::vec3 dL_dmean {0};
+	// Compute depth gradient w.r.t 3D means
+	// depth = p.x * p.x + p.y * p.y + p.z * p.z,
+	float depth = sqrt(m.x * m.x + m.y * m.y + m.z * m.z);
+	float mul = 0.5 / depth;  // derivative of sqrt
+	dL_dmean.x += dL_ddepth[idx] * 2 * m.x * mul;
+	dL_dmean.y += dL_ddepth[idx] * 2 * m.y * mul;
+	dL_dmean.z += dL_ddepth[idx] * 2 * m.z * mul;
+
 	// Compute loss gradient w.r.t. 3D means due to gradients of 2D means
 	// from rendering procedure
-	glm::vec3 dL_dmean;
 	float mul1 = (proj[0] * m.x + proj[4] * m.y + proj[8] * m.z + proj[12]) * m_w * m_w;
 	float mul2 = (proj[1] * m.x + proj[5] * m.y + proj[9] * m.z + proj[13]) * m_w * m_w;
-	dL_dmean.x = (proj[0] * m_w - proj[3] * mul1) * dL_dmean2D[idx].x + (proj[1] * m_w - proj[3] * mul2) * dL_dmean2D[idx].y;
-	dL_dmean.y = (proj[4] * m_w - proj[7] * mul1) * dL_dmean2D[idx].x + (proj[5] * m_w - proj[7] * mul2) * dL_dmean2D[idx].y;
-	dL_dmean.z = (proj[8] * m_w - proj[11] * mul1) * dL_dmean2D[idx].x + (proj[9] * m_w - proj[11] * mul2) * dL_dmean2D[idx].y;
+	dL_dmean.x += (proj[0] * m_w - proj[3] * mul1) * dL_dmean2D[idx].x + (proj[1] * m_w - proj[3] * mul2) * dL_dmean2D[idx].y;
+	dL_dmean.y += (proj[4] * m_w - proj[7] * mul1) * dL_dmean2D[idx].x + (proj[5] * m_w - proj[7] * mul2) * dL_dmean2D[idx].y;
+	dL_dmean.z += (proj[8] * m_w - proj[11] * mul1) * dL_dmean2D[idx].x + (proj[9] * m_w - proj[11] * mul2) * dL_dmean2D[idx].y;
 
 	// That's the second part of the mean gradient. Previous computation
 	// of cov2D and following SH conversion also affects it.
@@ -414,6 +423,7 @@ renderCUDA(
 	float3* __restrict__ dL_dmean2D,
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity,
+	float* __restrict__ dL_ddepths,
 	float* __restrict__ dL_dcolors)
 {
 	// We rasterize again. Compute necessary block info.
@@ -529,6 +539,12 @@ renderCUDA(
 				// Update the gradients w.r.t. color of the Gaussian. 
 				// Atomic, since this pixel is just one of potentially
 				// many that were affected by this Gaussian.
+				// if ((blockIdx.x == (20)) && (blockIdx.y == (15)) && (blockIdx.z == (0)) && 
+				// 	(threadIdx.x == (0)) && (threadIdx.y == (14)) && (threadIdx.z == (0)))
+				// {
+				// 	int jwh = 0;
+				// 	printf("%d, %d, %d\n", global_id, C, ch);
+				// }
 				atomicAdd(&(dL_dcolors[global_id * C + ch]), dchannel_dcolor * dL_dchannel);
 			}
 			const float c_d = collected_depths[j];
@@ -538,6 +554,8 @@ renderCUDA(
 			dL_dalpha *= T;
 			// Update last alpha (to be used in the next iteration)
 			last_alpha = alpha;
+
+			atomicAdd(&(dL_ddepths[global_id]), dL_depth * alpha * T);
 
 			// Account for fact that alpha also influences how much of
 			// the background color is added if nothing left to blend
@@ -587,6 +605,7 @@ void BACKWARD::preprocess(
 	const float3* dL_dmean2D,
 	const float* dL_dconic,
 	glm::vec3* dL_dmean3D,
+	float* dL_ddepth,
 	float* dL_dcolor,
 	float* dL_dcov3D,
 	float* dL_dsh,
@@ -627,6 +646,7 @@ void BACKWARD::preprocess(
 		campos,
 		(float3*)dL_dmean2D,
 		(glm::vec3*)dL_dmean3D,
+		dL_ddepth,
 		dL_dcolor,
 		dL_dcov3D,
 		dL_dsh,
@@ -651,6 +671,7 @@ void BACKWARD::render(
 	float3* dL_dmean2D,
 	float4* dL_dconic2D,
 	float* dL_dopacity,
+	float* dL_ddepths,
 	float* dL_dcolors)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
@@ -669,6 +690,7 @@ void BACKWARD::render(
 		dL_dmean2D,
 		dL_dconic2D,
 		dL_dopacity,
+		dL_ddepths,
 		dL_dcolors
 		);
 }

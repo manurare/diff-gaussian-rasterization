@@ -247,7 +247,8 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	}
 
 	// Store some useful helper data for the next steps.
-	depths[idx] = p_view.z;
+	float norm = sqrt(p_orig.x * p_orig.x + p_orig.y * p_orig.y + p_orig.z * p_orig.z);
+	depths[idx] = norm; // p_view.z;
 	radii[idx] = my_radius;
 	points_xy_image[idx] = point_image;
 	// Inverse 2D covariance and opacity neatly pack into one float4
