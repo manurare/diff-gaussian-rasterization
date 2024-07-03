@@ -264,6 +264,7 @@ __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
 	const uint32_t* __restrict__ point_list,
+	const int* radii,
 	int W, int H,
 	const float2* __restrict__ points_xy_image,
 	const float* __restrict__ features,
@@ -298,6 +299,7 @@ renderCUDA(
 	__shared__ int collected_id[BLOCK_SIZE];
 	__shared__ float2 collected_xy[BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
+	__shared__ int collected_radii[BLOCK_SIZE];
 
 	// Initialize helper variables
 	float T = 1.0f;
@@ -322,12 +324,16 @@ renderCUDA(
 			collected_id[block.thread_rank()] = coll_id;
 			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
+			collected_radii[block.thread_rank()] = radii[coll_id];
 		}
 		block.sync();
 
 		// Iterate over current batch
 		for (int j = 0; !done && j < min(BLOCK_SIZE, toDo); j++)
 		{
+			// Ignore negative radius gaussians
+			if (collected_radii[j] <= 0) continue;
+
 			// Keep track of current position in range
 			contributor++;
 
@@ -382,6 +388,7 @@ void FORWARD::render(
 	const dim3 grid, dim3 block,
 	const uint2* ranges,
 	const uint32_t* point_list,
+	const int* radii,
 	int W, int H,
 	const float2* means2D,
 	const float* colors,
@@ -396,6 +403,7 @@ void FORWARD::render(
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
 		point_list,
+		radii,
 		W, H,
 		means2D,
 		colors,

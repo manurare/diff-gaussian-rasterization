@@ -82,8 +82,8 @@ __global__ void duplicateWithKeys(
 		return;
 
 	// Generate no key/value pair for invisible Gaussians
-	if (radii[idx] > 0)
-	{
+	// if (radii[idx] > 0)
+	// {
 		// Find this Gaussian's offset in buffer for writing keys/values.
 		uint32_t off = (idx == 0) ? 0 : offsets[idx - 1];
 		uint2 rect_min, rect_max;
@@ -107,7 +107,7 @@ __global__ void duplicateWithKeys(
 				off++;
 			}
 		}
-	}
+	// }
 }
 
 // Check keys to see if it is at the start/end of one tile's range in 
@@ -324,6 +324,7 @@ int CudaRasterizer::Rasterizer::forward(
 		tile_grid, block,
 		imgState.ranges,
 		binningState.point_list,
+		radii,
 		width, height,
 		geomState.means2D,
 		feature_ptr,
