@@ -26,8 +26,9 @@ setup(
             "cuda_rasterizer/backward.cu",
             "rasterize_points.cu",
             "ext.cpp"],
-            extra_compile_args={"nvcc": ["-I" + os.path.join(os.path.dirname(os.path.abspath(__file__)), "third_party/glm/")]}) 
-                                         # "-G"]})if we want to expose debug symbols
+            extra_compile_args={"nvcc": ["-Xcompiler", "-fno-gnu-unique",
+                                         "-I" + os.path.join(os.path.dirname(os.path.abspath(__file__)), "third_party/glm/")]}),
+                                         #"-G", "-g", "-O0", "-lineinfo"]}) #if we want to expose debug symbols
         ],
     cmdclass={
         'build_ext': BuildExtension
