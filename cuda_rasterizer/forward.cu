@@ -217,7 +217,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 
 	// Invert covariance (EWA algorithm)
 	float det = (cov.x * cov.z - cov.y * cov.y);
-	if (det == 0.0f)
+	if ((det == 0.0f) || !isfinite(det))
 		return;
 	float det_inv = 1.f / det;
 	float3 conic = { cov.z * det_inv, -cov.y * det_inv, cov.x * det_inv };
@@ -320,6 +320,9 @@ renderCUDA(
 		{
 			int coll_id = point_list[range.x + progress];
 			collected_id[block.thread_rank()] = coll_id;
+			// if (coll_id == 1052654644){
+			// 	printf("%d\n", progress);
+			// }
 			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
 		}

@@ -80,6 +80,10 @@ class _RasterizeGaussians(torch.autograd.Function):
             raster_settings.debug
         )
 
+        # import os
+        # dump_file = os.path.join(os.getcwd(), "snapshot_fw.dump")
+        # if os.path.isfile(dump_file):
+        #     args = torch.load(dump_file, map_location=scales.device)
         # Invoke C++/CUDA rasterizer
         if raster_settings.debug:
             cpu_args = cpu_deep_copy_tuple(args) # Copy them before they can be corrupted
