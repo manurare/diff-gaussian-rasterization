@@ -10,7 +10,6 @@
 #
 
 from typing import NamedTuple
-from dataclasses import dataclass
 import torch.nn as nn
 import torch
 from . import _C
@@ -80,54 +79,38 @@ class _RasterizeGaussians(torch.autograd.Function):
             raster_settings.debug
         )
 
-        # import os
-        # dump_file = os.path.join(os.getcwd(), "snapshot_fw.dump")
-        # if os.path.isfile(dump_file):
-        #     args = torch.load(dump_file, map_location=scales.device)
         # Invoke C++/CUDA rasterizer
         if raster_settings.debug:
             cpu_args = cpu_deep_copy_tuple(args) # Copy them before they can be corrupted
             try:
-                num_rendered, color, depth, radii, geomBuffer, binningBuffer, imgBuffer = _C.rasterize_gaussians(*args)
+                num_rendered, color, depth, acc, radii, geomBuffer, binningBuffer, imgBuffer = _C.rasterize_gaussians(*args)
             except Exception as ex:
                 torch.save(cpu_args, "snapshot_fw.dump")
                 print("\nAn error occured in forward. Please forward snapshot_fw.dump for debugging.")
                 raise ex
         else:
-            num_rendered, color, depth, radii, geomBuffer, binningBuffer, imgBuffer = _C.rasterize_gaussians(*args)
+            num_rendered, color, depth, acc, radii, geomBuffer, binningBuffer, imgBuffer = _C.rasterize_gaussians(*args)
 
         # Keep relevant tensors for backward
         ctx.raster_settings = raster_settings
         ctx.num_rendered = num_rendered
-        ctx.save_for_backward(colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer)
-
-        accumulation = None
-        if raster_settings.return_accumulation:
-            alignment = 128
-            offset = (alignment - imgBuffer.data_ptr()) % alignment
-            total_size = raster_settings.image_height * raster_settings.image_width * 4
-            accumulation = (
-                imgBuffer[offset: offset + total_size]
-                .view(torch.float32)
-                .clone()
-                .mul_(-1)
-                .add_(1)
-                .view((raster_settings.image_height, raster_settings.image_width))
-            )
-        return color, depth, radii, accumulation
+        ctx.save_for_backward(colors_precomp, depth, acc, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer)
+        return color, depth, acc, radii
 
     @staticmethod
-    def backward(ctx, grad_out_color, grad_depth, grad_radii, _):
+    def backward(ctx, grad_out_color, grad_out_depth, grad_acc, grad_radii):
 
         # Restore necessary values from context
         num_rendered = ctx.num_rendered
         raster_settings = ctx.raster_settings
-        colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer = ctx.saved_tensors
+        colors_precomp, depth, acc, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer = ctx.saved_tensors
 
         # Restructure args as C++ method expects them
         args = (raster_settings.bg,
                 means3D, 
-                radii, 
+                radii,
+                acc,
+                depth,
                 colors_precomp, 
                 scales, 
                 rotations, 
@@ -138,7 +121,7 @@ class _RasterizeGaussians(torch.autograd.Function):
                 raster_settings.tanfovx, 
                 raster_settings.tanfovy, 
                 grad_out_color,
-                grad_depth,
+                grad_out_depth, 
                 sh, 
                 raster_settings.sh_degree, 
                 raster_settings.campos,
@@ -174,8 +157,7 @@ class _RasterizeGaussians(torch.autograd.Function):
 
         return grads
 
-@dataclass
-class GaussianRasterizationSettings:
+class GaussianRasterizationSettings(NamedTuple):
     image_height: int
     image_width: int 
     tanfovx : float
@@ -188,7 +170,6 @@ class GaussianRasterizationSettings:
     campos : torch.Tensor
     prefiltered : bool
     debug : bool
-    return_accumulation : bool
 
 class GaussianRasterizer(nn.Module):
     def __init__(self, raster_settings):

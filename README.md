@@ -1,6 +1,22 @@
-# Differential Gaussian Rasterization
+# Differential Gaussian Rasterization with Depth and Accuracy Map
 
-Used as the rasterization engine for the paper "3D Gaussian Splatting for Real-Time Rendering of Radiance Fields". If you can make use of it in your own research, please be so kind to cite us.
+[Gaussian Splatting](https://github.com/graphdeco-inria/gaussian-splatting)
+[Rasterizer](https://github.com/graphdeco-inria/diff-gaussian-rasterization/tree/59f5f77e3ddbac3ed9db93ec2cfe99ed6c5d121d)
+
+## Install
+```
+pip install <path of this repo> -e
+```
+
+At `gaussian_renderer/__init__.py`, change some lines
+```
+
+### rendered_image, radii, depth = rasterizer(
+rendered_image, depth, acc, radii = rasterizer(
+
+### ... and return dictionary
+```
+
 
 <section class="section" id="BibTeX">
   <div class="container is-max-desktop content">

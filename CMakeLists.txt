@@ -8,7 +8,6 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
-
 cmake_minimum_required(VERSION 3.20)
 
 project(DiffRast LANGUAGES CUDA CXX)
@@ -28,6 +27,8 @@ add_library(CudaRasterizer
 	cuda_rasterizer/rasterizer_impl.cu
 	cuda_rasterizer/rasterizer_impl.h
 	cuda_rasterizer/rasterizer.h
+		rasterize_points.cu
+		ext.cpp
 )
 
 set_target_properties(CudaRasterizer PROPERTIES CUDA_ARCHITECTURES "70;75;86")

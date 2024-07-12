@@ -45,7 +45,6 @@ __forceinline__ __device__ float ndc2Pix(float v, int S)
 
 __forceinline__ __device__ void getRect(const float2 p, int max_radius, uint2& rect_min, uint2& rect_max, dim3 grid)
 {
-	// the int cast of float NaN is -2147483648. I didnt know this :')
 	rect_min = {
 		min(grid.x, max((int)0, (int)((p.x - max_radius) / BLOCK_X))),
 		min(grid.y, max((int)0, (int)((p.y - max_radius) / BLOCK_Y)))
@@ -139,8 +138,8 @@ __forceinline__ __device__ float sigmoid(float x)
 
 __forceinline__ __device__ bool in_frustum(int idx,
 	const float* orig_points,
-	const float* viewmatrix,
-	const float* projmatrix,
+	const float* viewmatrix,    //world_view_transform
+	const float* projmatrix,    //full_proj_transform
 	bool prefiltered,
 	float3& p_view)
 {

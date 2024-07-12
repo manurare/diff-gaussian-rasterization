@@ -14,8 +14,6 @@
 #include <fstream>
 #include <algorithm>
 #include <numeric>
-// #include <thrust/extrema.h>
-// #include <thrust/execution_policy.h>
 #include <cuda.h>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
@@ -86,9 +84,6 @@ __global__ void duplicateWithKeys(
 	// Generate no key/value pair for invisible Gaussians
 	if (radii[idx] > 0)
 	{
-		// if (!isfinite((float)radii[idx])){
-		// 	printf("NaN value\n");
-		// }
 		// Find this Gaussian's offset in buffer for writing keys/values.
 		uint32_t off = (idx == 0) ? 0 : offsets[idx - 1];
 		uint2 rect_min, rect_max;
@@ -107,14 +102,6 @@ __global__ void duplicateWithKeys(
 				uint64_t key = y * grid.x + x;
 				key <<= 32;
 				key |= *((uint32_t*)&depths[idx]);
-				// if(key==2681142141607)
-				// {
-				// 	printf("%d", key);
-				// }
-				// if(idx==1052654644)
-				// {
-				// 	printf("%d", idx);
-				// }
 				gaussian_keys_unsorted[off] = key;
 				gaussian_values_unsorted[off] = idx;
 				off++;
@@ -229,9 +216,10 @@ int CudaRasterizer::Rasterizer::forward(
 	const float tan_fovx, float tan_fovy,
 	const bool prefiltered,
 	float* out_color,
-	float* out_depth,
+    float* out_depth,
+    float* out_acc,
 	int* radii,
-	bool debug)
+    bool debug)
 {
 	const float focal_y = height / (2.0f * tan_fovy);
 	const float focal_x = width / (2.0f * tan_fovx);
@@ -298,10 +286,7 @@ int CudaRasterizer::Rasterizer::forward(
 	char* binning_chunkptr = binningBuffer(binning_chunk_size);
 	BinningState binningState = BinningState::fromChunk(binning_chunkptr, num_rendered);
 
-	// uint32_t *valsHost = new uint32_t[num_rendered];
-	// CHECK_CUDA(cudaMemcpy(valsHost, binningState.point_list_unsorted, sizeof(uint32_t) * num_rendered, cudaMemcpyDeviceToHost), debug);
-
-	// For each instance to be rendered, produce adequate [ tile | depth ] key 
+	// For each instance to be rendered, produce adequate [ tile | depth ] key
 	// and corresponding dublicated Gaussian indices to be sorted
 	duplicateWithKeys << <(P + 255) / 256, 256 >> > (
 		P,
@@ -316,14 +301,6 @@ int CudaRasterizer::Rasterizer::forward(
 
 	int bit = getHigherMsb(tile_grid.x * tile_grid.y);
 
-	// uint32_t *resultValb4Sort = thrust::max_element(thrust::device, binningState.point_list_unsorted, binningState.point_list_unsorted + num_rendered);
-	// uint64_t *resultKeyb4Sort = thrust::max_element(thrust::device, binningState.point_list_keys_unsorted, binningState.point_list_keys_unsorted + num_rendered);
-
-	// uint32_t resultValb4SortHost;
-	// uint64_t resultKeyb4SortHost;
-	// CHECK_CUDA(cudaMemcpy(&resultValb4SortHost, resultValb4Sort, sizeof(uint32_t), cudaMemcpyDeviceToHost), debug);
-	// CHECK_CUDA(cudaMemcpy(&resultKeyb4SortHost, resultKeyb4Sort, sizeof(uint64_t), cudaMemcpyDeviceToHost), debug);
-
 	// Sort complete list of (duplicated) Gaussian indices by keys
 	CHECK_CUDA(cub::DeviceRadixSort::SortPairs(
 		binningState.list_sorting_space,
@@ -333,14 +310,6 @@ int CudaRasterizer::Rasterizer::forward(
 		num_rendered, 0, 32 + bit), debug)
 
 	CHECK_CUDA(cudaMemset(imgState.ranges, 0, tile_grid.x * tile_grid.y * sizeof(uint2)), debug);
-
-	// uint32_t *resultValAfterSort = thrust::max_element(thrust::device, binningState.point_list, binningState.point_list + num_rendered);
-	// uint64_t *resultKeyAfterSort = thrust::max_element(thrust::device, binningState.point_list_keys, binningState.point_list_keys + num_rendered);
-
-	// uint32_t resultValAfterSortHost;
-	// uint64_t resultKeyAfterSortHost;
-	// CHECK_CUDA(cudaMemcpy(&resultValAfterSortHost, resultValAfterSort, sizeof(uint32_t), cudaMemcpyDeviceToHost), debug);
-	// CHECK_CUDA(cudaMemcpy(&resultKeyAfterSortHost, resultKeyAfterSort, sizeof(uint64_t), cudaMemcpyDeviceToHost), debug);
 
 	// Identify start and end of per-tile workloads in sorted list
 	if (num_rendered > 0)
@@ -365,7 +334,8 @@ int CudaRasterizer::Rasterizer::forward(
 		imgState.n_contrib,
 		background,
 		out_color,
-		out_depth), debug)
+        out_depth,
+        out_acc), debug)
 
 	return num_rendered;
 }
@@ -388,16 +358,18 @@ void CudaRasterizer::Rasterizer::backward(
 	const float* campos,
 	const float tan_fovx, float tan_fovy,
 	const int* radii,
+    const float* accum_acc,
+    const float* accum_depth,
 	char* geom_buffer,
 	char* binning_buffer,
 	char* img_buffer,
 	const float* dL_dpix,
-	const float* dL_depths,
+    const float* dL_dDs,
 	float* dL_dmean2D,
 	float* dL_dconic,
 	float* dL_dopacity,
-	float* dL_ddepths,
 	float* dL_dcolor,
+    float* dL_ddepths,
 	float* dL_dmean3D,
 	float* dL_dcov3D,
 	float* dL_dsh,
@@ -424,7 +396,7 @@ void CudaRasterizer::Rasterizer::backward(
 	// opacity and RGB of Gaussians from per-pixel loss gradients.
 	// If we were given precomputed colors and not SHs, use them.
 	const float* color_ptr = (colors_precomp != nullptr) ? colors_precomp : geomState.rgb;
-	const float* depth_ptr = geomState.depths;
+    const float* depth_ptr = geomState.depths;
 	CHECK_CUDA(BACKWARD::render(
 		tile_grid,
 		block,
@@ -435,16 +407,19 @@ void CudaRasterizer::Rasterizer::backward(
 		geomState.means2D,
 		geomState.conic_opacity,
 		color_ptr,
-		depth_ptr,
+        depth_ptr,
 		imgState.accum_alpha,
+        accum_acc,
+        accum_depth,
 		imgState.n_contrib,
 		dL_dpix,
-		dL_depths,
+        dL_dDs,
 		(float3*)dL_dmean2D,
 		(float4*)dL_dconic,
 		dL_dopacity,
-		dL_ddepths,
-		dL_dcolor), debug)
+		dL_dcolor,
+        dL_ddepths
+        ), debug)
 
 	// Take care of the rest of preprocessing. Was the precomputed covariance
 	// given to us or a scales/rot pair? If precomputed, pass that. If not,
@@ -467,8 +442,8 @@ void CudaRasterizer::Rasterizer::backward(
 		(float3*)dL_dmean2D,
 		dL_dconic,
 		(glm::vec3*)dL_dmean3D,
-		dL_ddepths,
 		dL_dcolor,
+        dL_ddepths,
 		dL_dcov3D,
 		dL_dsh,
 		(glm::vec3*)dL_dscale,
