@@ -151,6 +151,45 @@ __device__ void computeCov3D(const glm::vec3 scale, float mod, const glm::vec4 r
 	cov3D[5] = Sigma[2][2];
 }
 
+__device__ void computeCov3D(const glm::vec3 scale, float mod, const glm::vec4 rot, glm::mat3x3 rotate90, float* cov3D)
+{
+	// Create scaling matrix
+	glm::mat3 S = glm::mat3(1.0f);
+	S[0][0] = mod * scale.x;
+	S[1][1] = mod * scale.y;
+	S[2][2] = mod * scale.z;
+
+	// Normalize quaternion to get valid rotation
+	glm::vec4 q = rot;// / glm::length(rot);
+	float r = q.x;
+	float x = q.y;
+	float y = q.z;
+	float z = q.w;
+
+	// Compute rotation matrix from quaternion
+	glm::mat3 R = glm::mat3(
+		1.f - 2.f * (y * y + z * z), 2.f * (x * y - r * z), 2.f * (x * z + r * y),
+		2.f * (x * y + r * z), 1.f - 2.f * (x * x + z * z), 2.f * (y * z - r * x),
+		2.f * (x * z - r * y), 2.f * (y * z + r * x), 1.f - 2.f * (x * x + y * y)
+	);
+
+	// rotate 90 degs
+	R = rotate90 * R;
+
+	glm::mat3 M = S * R;
+
+	// Compute 3D world covariance matrix Sigma
+	glm::mat3 Sigma = glm::transpose(M) * M;
+
+	// Covariance is symmetric, only store upper right
+	cov3D[0] = Sigma[0][0];
+	cov3D[1] = Sigma[0][1];
+	cov3D[2] = Sigma[0][2];
+	cov3D[3] = Sigma[1][1];
+	cov3D[4] = Sigma[1][2];
+	cov3D[5] = Sigma[2][2];
+}
+
 // Perform initial steps for each Gaussian prior to rasterization.
 template<int C>
 __global__ void preprocessCUDA(int P, int D, int M,
@@ -222,6 +261,26 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	float det_inv = 1.f / det;
 	float3 conic = { cov.z * det_inv, -cov.y * det_inv, cov.x * det_inv };
 
+	// Rotate gaussian 90deg around UP
+	glm::vec3 up(viewmatrix[4], viewmatrix[5], viewmatrix[6]);
+	glm::quat rot90_q = glm::angleAxis(glm::radians(90.0f), up);
+	glm::mat3x3 rot90 = glm::mat3_cast(rot90_q);
+	float cov3D_90[6];
+	computeCov3D(scales[idx], scale_modifier, rotations[idx], rot90, cov3D_90);
+	const float* cov3D_90_const = cov3D_90;
+
+	// Compute 2D screen-space covariance matrix
+	float3 cov90 = computeCov2D(p_orig, focal_x, focal_y, tan_fovx, tan_fovy, cov3D_90_const, viewmatrix);
+
+	// Invert covariance (EWA algorithm)
+	float det90 = (cov90.x * cov90.z - cov90.y * cov90.y);
+	if ((det90 == 0.0f) || !isfinite(det90))
+		return;
+	float mid_90 = 0.5f * (cov90.x + cov90.z);
+	float lambda1_90 = mid_90 + sqrt(max(0.1f, mid_90 * mid_90 - det90));
+	float lambda2_90 = mid_90 - sqrt(max(0.1f, mid_90 * mid_90 - det90));
+	float my_radius_90 = ceil(3.f * sqrt(max(lambda1_90, lambda2_90)));
+
 	// Compute extent in screen space (by finding eigenvalues of
 	// 2D covariance matrix). Use extent to compute a bounding rectangle
 	// of screen-space tiles that this Gaussian overlaps with. Quit if
@@ -230,6 +289,8 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	float lambda1 = mid + sqrt(max(0.1f, mid * mid - det));
 	float lambda2 = mid - sqrt(max(0.1f, mid * mid - det));
 	float my_radius = ceil(3.f * sqrt(max(lambda1, lambda2)));
+	my_radius = max(my_radius, my_radius_90);
+
 	float2 point_image = { ndc2Pix(p_proj.x, W), ndc2Pix(p_proj.y, H) };
 	uint2 rect_min, rect_max;
 	getRect(point_image, my_radius, rect_min, rect_max, grid);
